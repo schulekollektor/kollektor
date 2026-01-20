@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Kollektor</title>
+
+<style>
+:root{
+  --bg:#ffffff;--card:#ffffff;--border:#e0e0e0;--text:#1f2937;--muted:#6b7280;
+  --primary:#1e88e5;--accent:#fbc02d;--success:#43a047;--danger:#e53935;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto;background:var(--bg);color:var(--text)}
+.hidden{display:none}
+header{position:sticky;top:0;z-index:10;background:linear-gradient(90deg,var(--accent),#fff,var(--primary));
+border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;padding:10px 16px}
+header h1{font-size:20px;margin:0}
+header img{height:36px;border-radius:6px;cursor:pointer}
+header .spacer{flex:1}
+button{border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 10px;cursor:pointer}
+button.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+button.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+button.followed{background:var(--success);color:#fff;border-color:var(--success)}
+.container{max-width:900px;margin:0 auto;padding:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+.pad{padding:12px}
+.profile-card{cursor:pointer}
+.profile-card img{width:100%;aspect-ratio:1/1;object-fit:cover}
+.profile-card h3{margin:8px 0 2px}
+.profile-card .cat{color:var(--muted);font-size:13px}
+.profile-header{display:flex;gap:12px;padding:12px;align-items:center}
+.profile-header img{width:96px;height:96px;border-radius:50%;object-fit:cover;cursor:pointer}
+.profile-meta h2{margin:0}
+.profile-meta .cat{color:var(--muted)}
+.profile-actions{margin-left:auto}
+.search{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border)}
+.edit-only{display:none}
+[data-editable]{outline:none}
+.hashtag{color:var(--primary)}
+.muted{color:var(--muted)}
+</style>
+</head>
+
+<body>
+
+<header>
+  <img id="logo" src="https://via.placeholder.com/40" onclick="selectImage('logo')">
+  <h1>Kollektor</h1>
+  <div class="spacer"></div>
+  <button onclick="toggleEditMode()">Bearbeiten</button>
+  <button onclick="goHome()">Start</button>
+  <button onclick="openReports()">Gemeldete Beiträge</button>
+</header>
+
+<input type="file" id="fileInput" hidden accept="image/*">
+
+<div id="homeView" class="container">
+  <input class="search" placeholder="Profile suchen…" oninput="searchProfiles(this.value)">
+  <div class="pad edit-only">
+    <button onclick="addProfile()">➕ Profil</button>
+  </div>
+  <div id="profiles" class="grid"></div>
+</div>
+
+<div id="profileView" class="container hidden">
+  <div id="profileDetail"></div>
+</div>
+
+<div id="reportsView" class="container hidden">
+  <h2>Gemeldete Beiträge</h2>
+  <button onclick="window.print()">Als PDF speichern</button>
+  <div id="reportsList"></div>
+</div>
+
+<div id="reportFormView" class="container hidden">
+  <h2>Beitrag melden</h2>
+
+  <p><strong>Was findest du an diesem Post auffällig?</strong></p>
+  <textarea id="reportQ1" style="width:100%;height:80px"></textarea>
+
+  <p><strong>Warum wurde das Bild deiner Meinung nach verfälscht?</strong></p>
+  <textarea id="reportQ2" style="width:100%;height:80px"></textarea>
+
+  <p><strong>Wie gut war zu erkennen, dass hier etwas nicht stimmt?</strong></p>
+  <div id="severity">
+    <button onclick="setSeverity('😊',this)">😊</button>
+    <button onclick="setSeverity('😐',this)">😐</button>
+    <button onclick="setSeverity('😟',this)">😟</button>
+  </div>
+
+  <br>
+  <button class="primary" onclick="submitReportForm()">Absenden</button>
+</div>
+
+<script>
+/* ===== BASIS ===== */
+let editMode=false;
+const EDIT_PASSWORD='kollektor123';
+
+let profiles=JSON.parse(localStorage.getItem('kollektor_profiles'))||[];
+let reports=JSON.parse(localStorage.getItem('kollektor_reports'))||[];
+
+let imageTarget=null;
+let currentReport=null;
+let reportSeverity=null;
+
+const homeView=document.getElementById('homeView');
+const profileView=document.getElementById('profileView');
+const profileDetail=document.getElementById('profileDetail');
+const reportsView=document.getElementById('reportsView');
+const reportFormView=document.getElementById('reportFormView');
+const fileInput=document.getElementById('fileInput');
+const logo=document.getElementById('logo');
+
+/* ===== LOGO ===== */
+const storedLogo=localStorage.getItem('kollektor_logo');
+if(storedLogo) logo.src=storedLogo;
+
+/* ===== HILFSFUNKTIONEN ===== */
+function save(){
+  try {
+    localStorage.setItem(
+      'kollektor_profiles',
+      JSON.stringify(profiles)
+    );
+  } catch(e){
+    alert(
+      'Speicher voll oder Fehler beim Speichern.\n' +
+      'Bitte weniger oder kleinere Bilder verwenden.'
+    );
+    console.error(e);
+  }
+}
+function saveReports(){localStorage.setItem('kollektor_reports',JSON.stringify(reports))}
+
+function formatTags(t){
+  return (t||'').replace(/#([^\s#]+)/g,"<span class='hashtag'>#$1</span>");
+}
+
+/* ===== EDITOR ===== */
+function toggleEditMode(){
+  if(!editMode){
+    const pw=prompt('Passwort eingeben');
+    if(pw!==EDIT_PASSWORD) return alert('Falsches Passwort');
+  }
+  editMode=!editMode;
+  document.querySelectorAll('[data-editable]').forEach(e=>e.contentEditable=editMode);
+  document.querySelectorAll('.edit-only').forEach(e=>e.style.display=editMode?'inline-block':'none');
+}
+
+/* ===== BILDER ===== */
+function selectImage(type,pi=null,postIndex=null){
+  if(!editMode) return;
+  imageTarget={type,pi,postIndex};
+  fileInput.click();
+}
+
+fileInput.onchange = () => {
+  const f = fileInput.files[0];
+  if (!f || !imageTarget) return;
+
+  const reader = new FileReader();
+
+  reader.onload = () => {
+    const img = new Image();
+
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const maxSize = 800;
+
+      let w = img.width;
+      let h = img.height;
+
+      if (w > h && w > maxSize) {
+        h *= maxSize / w;
+        w = maxSize;
+      } else if (h > maxSize) {
+        w *= maxSize / h;
+        h = maxSize;
+      }
+
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+
+      const compressed = canvas.toDataURL('image/jpeg', 0.7);
+
+      if (imageTarget.type === 'profile') {
+        profiles[imageTarget.pi].img = compressed;
+      }
+      if (imageTarget.type === 'post') {
+        profiles[imageTarget.pi].posts[imageTarget.postIndex].img = compressed;
+      }
+      if (imageTarget.type === 'logo') {
+        logo.src = compressed;
+        localStorage.setItem('kollektor_logo', compressed);
+        imageTarget = null;
+        return;
+      }
+
+      save();
+      openProfile(imageTarget.pi);
+      imageTarget = null;
+    };
+
+    img.src = reader.result;
+  };
+
+  reader.readAsDataURL(f); // ← DAS war der fehlende Teil
+};
+
+
+/* ===== PROFILE ===== */
+function addProfile(){
+  if(!editMode) return;
+  profiles.push({
+    name:'Neues Profil',
+    category:'Gaming',
+    img:'https://via.placeholder.com/400',
+    posts:[]
+  });
+  save();
+  renderProfiles();
+}
+
+/* ===== POSTS ===== */
+function addPost(i){
+  if(!editMode) return;
+  profiles[i].posts.push({
+    img:'https://via.placeholder.com/600',
+    caption:'',
+    location:'',
+    date:'',
+    likes:'0 Likes',
+    liked:false,
+    comments:[]
+  });
+  save();
+  openProfile(i);
+}
+
+function deletePost(i,pi){
+  if(!editMode) return;
+  profiles[i].posts.splice(pi,1);
+  save();
+  openProfile(i);
+}
+
+/* ===== KOMMENTARE ===== */
+function addComment(i,pi){
+  if(!editMode) return;
+  profiles[i].posts[pi].comments.push({user:'Nutzer',text:''});
+  save();
+  openProfile(i);
+}
+
+function deleteComment(i,pi,ci){
+  if(!editMode) return;
+  profiles[i].posts[pi].comments.splice(ci,1);
+  save();
+  openProfile(i);
+}
+
+/* ===== LIKES ===== */
+
+function toggleLike(i,pi){
+  const post = profiles[i].posts[pi];
+
+  let n = parseInt(post.likes) || 0;
+
+  post.liked = !post.liked;
+  n += post.liked ? 1 : -1;
+
+  if(n < 0) n = 0;
+
+  post.likes = n + ' Likes';
+  save();
+  openProfile(i);
+}
+
+/* ===== MELDEN ===== */
+function reportPost(i){
+  currentReport={profile:profiles[i].name};
+  reportSeverity=null;
+  homeView.classList.add('hidden');
+  profileView.classList.add('hidden');
+  reportsView.classList.add('hidden');
+  reportFormView.classList.remove('hidden');
+  reportQ1.value='';
+  reportQ2.value='';
+}
+
+function setSeverity(v,b){
+  reportSeverity=v;
+  document.querySelectorAll('#severity button').forEach(x=>x.style.background='');
+  b.style.background='var(--success)';
+}
+
+function submitReportForm(){
+  if(!currentReport) return;
+  reports.push({
+    profile:currentReport.profile,
+    q1:reportQ1.value,
+    q2:reportQ2.value,
+    severity:reportSeverity
+  });
+  saveReports();
+  reportFormView.classList.add('hidden');
+  openReports();
+}
+
+/* ===== REPORTS ===== */
+function openReports(){
+  homeView.classList.add('hidden');
+  profileView.classList.add('hidden');
+  reportFormView.classList.add('hidden');
+  reportsView.classList.remove('hidden');
+  renderReports();
+}
+
+function renderReports(){
+  const box=document.getElementById('reportsList');
+  box.innerHTML='';
+  reports.forEach((r,i)=>{
+    const d=document.createElement('div');
+    d.className='card';
+    d.innerHTML=`
+      <div class="pad">
+        <strong>Profil:</strong> ${r.profile}<br>
+        <strong>Auffällig:</strong> ${r.q1}<br>
+        <strong>Verfälschung:</strong> ${r.q2}<br>
+        <strong>Einschätzung:</strong> ${r.severity||''}<br>
+        <button class="edit-only danger" onclick="deleteReport(${i})">Meldung löschen</button>
+      </div>`;
+    box.appendChild(d);
+  });
+  document.querySelectorAll('.edit-only').forEach(e=>e.style.display=editMode?'inline-block':'none');
+}
+
+function deleteReport(i){
+  if(!editMode) return;
+  reports.splice(i,1);
+  saveReports();
+  renderReports();
+}
+
+/* ===== NAVIGATION ===== */
+function goHome(){
+  profileView.classList.add('hidden');
+  reportsView.classList.add('hidden');
+  reportFormView.classList.add('hidden');
+  homeView.classList.remove('hidden');
+  renderProfiles();
+}
+
+function renderProfiles(){
+  const box=document.getElementById('profiles');
+  box.innerHTML='';
+  profiles.forEach((p,i)=>{
+    const d=document.createElement('div');
+    d.className='card profile-card';
+    d.innerHTML=`
+      <img src="${p.img}">
+      <div class="pad">
+        <h3>${p.name}</h3>
+        <div class="cat">${p.category}</div>
+      </div>`;
+    d.onclick=()=>openProfile(i);
+    box.appendChild(d);
+  });
+}
+
+
+function openProfile(i){
+  homeView.classList.add('hidden');
+  reportsView.classList.add('hidden');
+  reportFormView.classList.add('hidden');
+  profileView.classList.remove('hidden');
+
+  const p = profiles[i];
+
+  profileDetail.innerHTML = `
+    <div class="card">
+      <div class="profile-header">
+        <img src="${p.img}" onclick="selectImage('profile',${i})">
+        <div class="profile-meta">
+          <h2 data-editable
+              onblur="profiles[${i}].name=this.innerText;save()">
+            ${p.name}
+          </h2>
+          <div class="cat" data-editable
+               onblur="profiles[${i}].category=this.innerText;save()">
+            ${p.category}
+          </div>
+        </div>
+        <div class="profile-actions">
+          <button class="edit-only danger"
+                  onclick="profiles.splice(${i},1);save();goHome()">
+            Profil löschen
+          </button>
+        </div>
+      </div>
+
+      <div class="pad edit-only">
+        <button onclick="addPost(${i})">➕ Beitrag</button>
+      </div>
+    </div>
+
+    ${p.posts.map((post,pi)=>`
+      <div class="card">
+        <div class="pad muted" data-editable
+             onblur="profiles[${i}].posts[${pi}].location=this.innerText;save()">
+          ${post.location || 'Ort'}
+        </div>
+
+        <div class="pad muted" data-editable
+             onblur="profiles[${i}].posts[${pi}].date=this.innerText;save()">
+          ${post.date || 'Datum'}
+        </div>
+
+        <img src="${post.img}">
+
+        <div class="pad edit-only">
+          <button onclick="selectImage('post',${i},${pi})">📷 Bild auswählen</button>
+        </div>
+
+        <div class="pad">
+          <button class="edit-only danger"
+                  onclick="deletePost(${i},${pi})">
+            Post löschen
+          </button>
+
+<button onclick="toggleLike(${i},${pi})">❤️</button>
+<span data-editable
+      onblur="profiles[${i}].posts[${pi}].likes=this.innerText;save()">
+  ${post.likes}
+</span>    
+
+          <button class="danger"
+                  onclick="reportPost(${i},${pi})">
+            Melden
+          </button>
+
+          <div class="pad" data-editable
+     onblur="profiles[${i}].posts[${pi}].caption=this.innerText;save()">
+  ${formatTags(post.caption || 'Bildunterschrift')}
+</div>
+
+          ${post.comments.map((c,ci)=>`
+            <div class="comment">
+  <strong data-editable
+          onblur="profiles[${i}].posts[${pi}].comments[${ci}].user=this.innerText;save()">
+    ${formatTags(c.user || 'Nutzer')}
+  </strong>
+  <span data-editable
+        onblur="profiles[${i}].posts[${pi}].comments[${ci}].text=this.innerText;save()">
+    ${formatTags(c.text || 'Kommentar')}
+  </span>
+  <button class="edit-only danger"
+          onclick="deleteComment(${i},${pi},${ci})">✕</button>
+</div>
+          `).join('')}
+
+          <button class="edit-only"
+                  onclick="addComment(${i},${pi})">
+            ➕ Kommentar
+          </button>
+        </div>
+      </div>
+    `).join('')}
+  `;
+
+  document.querySelectorAll('[data-editable]')
+    .forEach(e=>e.contentEditable=editMode);
+  document.querySelectorAll('.edit-only')
+    .forEach(e=>e.style.display=editMode?'inline-block':'none');
+}
+
+renderProfiles();
+</script>
+</body>
+</html>
